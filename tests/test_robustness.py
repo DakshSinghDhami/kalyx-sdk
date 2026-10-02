@@ -1,6 +1,6 @@
-"""Client robustness: confirm-before-retrieve ordering, commitment flapping,
-unicode/oversized queries, HTTP-date Retry-After, and oversized but valid
-payloads. All hermetic (respx fakes)."""
+"""Client robustness: confirm-before-retrieve ordering, malformed transport
+payloads, redirects, unicode/oversized queries, HTTP-date Retry-After, and
+commitment flapping. All hermetic (respx fakes)."""
 
 import json
 import time
@@ -139,9 +139,7 @@ def test_commitment_flapping_is_tolerated(payer):
 @respx.mock
 def test_probe_200_wrong_content_type_is_unavailable_not_crash(payer):
     respx.post(f"{GATEWAY}/v1/query").respond(
-        200,
-        content=b"<html><body>proxy error</body></html>",
-        headers={"Content-Type": "text/html"},
+        200, content=b"<html><body>proxy error</body></html>", headers={"Content-Type": "text/html"}
     )
     client = make_client(payer)
     with pytest.raises(GatewayUnavailable):
@@ -166,6 +164,26 @@ def test_retrieve_200_non_json_after_payment(payer):
     client = make_client(payer)
     with pytest.raises(GatewayUnavailable):
         client.query_and_retrieve("settlement")
+
+
+@respx.mock
+def test_huge_node_page_parses(payer):
+    items = [
+        {
+            "node_id": f"{i:064x}",
+            "title": f"node {i} " + "x" * 100,
+            "price_lamports": 20_000,
+            "chunk_count": 1,
+            "tags": ["a", "b"],
+        }
+        for i in range(5000)
+    ]
+    body = {"items": items, "total": 5000, "next_cursor": None}
+    respx.get(f"{GATEWAY}/v1/nodes").respond(200, content=json.dumps(body).encode())
+    client = make_client(payer)
+    page = client.list_nodes()
+    assert len(page.items) == 5000
+    assert page.total == 5000
 
 
 @respx.mock
@@ -204,29 +222,6 @@ def test_retrieve_redirect_after_payment_not_followed(payer):
     with pytest.raises(GatewayUnavailable):
         client.query_and_retrieve("settlement")
     assert evil.call_count == 0  # the payment credential never left the host
-
-
-# --- oversized but valid payloads -------------------------------------------------
-
-
-@respx.mock
-def test_huge_node_page_parses(payer):
-    items = [
-        {
-            "node_id": f"{i:064x}",
-            "title": f"node {i} " + "x" * 100,
-            "price_lamports": 20_000,
-            "chunk_count": 1,
-            "tags": ["a", "b"],
-        }
-        for i in range(5000)
-    ]
-    body = {"items": items, "total": 5000, "next_cursor": None}
-    respx.get(f"{GATEWAY}/v1/nodes").respond(200, content=json.dumps(body).encode())
-    client = make_client(payer)
-    page = client.list_nodes()
-    assert len(page.items) == 5000
-    assert page.total == 5000
 
 
 # --- query validation -----------------------------------------------------------

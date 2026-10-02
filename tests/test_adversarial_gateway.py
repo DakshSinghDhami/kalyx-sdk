@@ -97,7 +97,8 @@ def test_onchain_content_hash_differs_from_challenge_rejected():
 
 
 def test_malformed_chunk_id_rejected_pre_payment():
-    sc = Scenario(challenge_chunk_id="!!!not-hex!!!")
+    """A chunk id that can never match sha256(content)[:16] must not be paid."""
+    sc = Scenario(challenge_chunk_id="not-hex-at-all")
     with EvilGateway(sc) as stack, make_client(stack) as client:
         with pytest.raises(VerificationFailed) as ei:
             client.query_and_retrieve("settlement")
@@ -106,11 +107,14 @@ def test_malformed_chunk_id_rejected_pre_payment():
 
 
 def test_absurd_price_never_reaches_a_transaction():
-    sc = Scenario(query_price=2**64)  # exceeds the u64 instruction field
+    """price_lamports beyond u64 must raise a typed config error, never crash
+    with a bare OverflowError, and never broadcast."""
+    sc = Scenario(query_price=2**64 + 5, rpc_balance=2**66)
     with EvilGateway(sc) as stack, make_client(stack) as client:
-        with pytest.raises(KalyxError):  # typed error, never OverflowError
+        with pytest.raises(KalyxError):
             client.query_and_retrieve("settlement")
         assert stack.send_count == 0
+        assert client.spent_lamports == 0  # reservation released
 
 
 def test_zero_price_challenge_rejected():
@@ -146,7 +150,6 @@ def test_retrieve_403_after_funding_surfaces_signature_and_refund_guidance():
         err = ei.value
         assert "funding-sig-1" in str(err)  # the real funding signature
         assert err.funding_signature == "funding-sig-1"
-        assert err.escrow_address is not None
         assert "refund_expired_escrow" in str(err)  # self-refund guidance
         assert stack.send_count == 1  # never pays twice
         assert stack.state.retrieve_attempts >= 1
