@@ -316,6 +316,22 @@ async def abalance(rpc: AsyncRpcClient, address: str) -> int:
     return res["value"]
 
 
+def current_slot(rpc: RpcClient) -> int:
+    """Current confirmed slot (``getSlot`` with confirmed commitment)."""
+    res = rpc.call("getSlot", [{"commitment": "confirmed"}])
+    if not isinstance(res, int) or isinstance(res, bool):
+        raise ChainError("RPC getSlot returned malformed result")
+    return res
+
+
+async def acurrent_slot(rpc: AsyncRpcClient) -> int:
+    """Async variant of :func:`current_slot`."""
+    res = await rpc.call("getSlot", [{"commitment": "confirmed"}])
+    if not isinstance(res, int) or isinstance(res, bool):
+        raise ChainError("RPC getSlot returned malformed result")
+    return res
+
+
 def latest_blockhash(rpc: RpcClient) -> str:
     """A recent blockhash at ``confirmed`` commitment."""
     res = rpc.call("getLatestBlockhash", [{"commitment": "confirmed"}])

@@ -183,3 +183,35 @@ class FakeRpc:
 
     def methods(self) -> list[str]:
         return [m for m, _ in self.calls]
+
+
+# --- escrow account builder (refund tests) -----------------------------------
+
+ESCROW_DISCRIMINATOR = bytes([31, 213, 123, 187, 186, 22, 218, 155])
+ESCROW_STATUS = {"Created": 0, "Funded": 1, "Settled": 2, "Disputed": 3}
+
+
+def escrow_account_b64(
+    *,
+    consumer,
+    node=None,
+    amount=PRICE,
+    qhash=None,
+    status="Funded",
+    created_at=1_759_000_000,
+    created_at_slot=1000,
+    bump=255,
+):
+    from solders.pubkey import Pubkey
+
+    node_pk = Pubkey.from_string(node) if node else Pubkey.from_string(NODE_ADDR)
+    raw = bytearray(ESCROW_DISCRIMINATOR)
+    raw += bytes(Pubkey.from_string(consumer) if isinstance(consumer, str) else consumer)
+    raw += bytes(node_pk)
+    raw += amount.to_bytes(8, "little")
+    raw += qhash if qhash else bytes(32)
+    raw += bytes([ESCROW_STATUS[status]])
+    raw += created_at.to_bytes(8, "little", signed=True)
+    raw += created_at_slot.to_bytes(8, "little")
+    raw += bytes([bump])
+    return base64.b64encode(bytes(raw)).decode()

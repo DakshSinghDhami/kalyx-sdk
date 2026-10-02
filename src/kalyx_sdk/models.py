@@ -396,3 +396,13 @@ class EscrowState:
     def funded(self) -> bool:
         """True when the escrow is in the on-chain ``Funded`` state."""
         return self.status == "Funded"
+
+
+@dataclass(frozen=True)
+class RefundResult:
+    """Outcome of a successful ``refund_escrow`` call."""
+
+    escrow_address: str
+    refunded_lamports: int
+    signature: str
+    raw: dict[str, Any] = field(default_factory=dict)
