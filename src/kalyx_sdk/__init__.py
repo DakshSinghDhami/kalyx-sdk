@@ -3,6 +3,7 @@
 The full public API lands module by module; see ``docs/design.md``.
 """
 
-__version__ = "0.1.0"
+from ._version import __version__
+from .client import KalyxClient
 
-__all__ = ["__version__"]
+__all__ = ["KalyxClient", "__version__"]

@@ -11,7 +11,7 @@ import os
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from . import __version__
+from ._version import __version__
 from .chain import KnowledgeNodeState
 from .errors import ConfigError, VerificationFailed
 from .escrow import DEFAULT_PROGRAM_ID, derive_node_pda
@@ -216,3 +216,459 @@ def verify_node_preflight(challenge: Challenge, node: KnowledgeNodeState | None)
             "challenge price would fail on-chain",
             reason="onchain_price_higher",
         )
+
+
+# --- HTTP plumbing -------------------------------------------------------------
+
+import hashlib  # noqa: E402
+import time  # noqa: E402
+from typing import Any  # noqa: E402
+
+import httpx  # noqa: E402
+
+from . import chain as _chain  # noqa: E402
+from .errors import (  # noqa: E402
+    BudgetExhausted,
+    ChainError,
+    ClusterMismatchError,
+    DisabledError,
+    GatewayUnavailable,
+    InsufficientFunds,
+    KalyxError,
+    PaymentRequired,
+    PriceExceedsBudget,
+    RateLimited,
+    ReplayRejected,
+)
+from .escrow import build_create_and_fund_tx, query_hash  # noqa: E402
+from .models import ProbeResult, ProtocolConfig, RetrievalResult  # noqa: E402
+
+#: Lamports paid in fees for a one-signature transaction.
+TX_FEE_LAMPORTS = 5_000
+
+_CONFIG_TTL_SECONDS = 60.0
+_DISABLED_REASONS = {"demo_disabled", "cluster_refused"}
+
+
+def _request_id(headers: httpx.Headers) -> str | None:
+    return headers.get("x-request-id") or headers.get("x-kalyx-request-id")
+
+
+def parse_retry_after(headers: httpx.Headers, body: dict[str, Any] | None = None) -> float | None:
+    """Parse ``Retry-After`` (delta-seconds or HTTP-date) into seconds.
+
+    Falls back to a numeric ``retry_after`` field in the JSON body. Returns
+    None when nothing parseable is present.
+    """
+    raw = headers.get("retry-after")
+    if raw:
+        raw = raw.strip()
+        if raw.isdigit():
+            return float(int(raw))
+        from email.utils import parsedate_to_datetime
+
+        try:
+            dt = parsedate_to_datetime(raw)
+            return max(0.0, dt.timestamp() - time.time())
+        except (TypeError, ValueError):
+            pass
+    if body is not None:
+        val = body.get("retry_after")
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            return float(val)
+    return None
+
+
+def _error_message(body: Any) -> str:
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, str) and err:
+            return err
+    return "unexpected gateway response"
+
+
+def _map_error_status(status: int, body: Any, headers: httpx.Headers) -> KalyxError:
+    """Map a gateway error status to the typed error hierarchy."""
+    rid = _request_id(headers)
+    msg = _error_message(body)
+    reason = body.get("reason") if isinstance(body, dict) else None
+    if status == 409:
+        return ReplayRejected(msg, request_id=rid)
+    if status == 429:
+        return RateLimited(
+            msg,
+            retry_after=parse_retry_after(headers, body if isinstance(body, dict) else None),
+            request_id=rid,
+        )
+    if status == 503:
+        return GatewayUnavailable(msg, reason=reason, request_id=rid)
+    if status == 403:
+        if reason in _DISABLED_REASONS:
+            return DisabledError(msg, reason=reason, request_id=rid)
+        return VerificationFailed(msg, reason=reason, request_id=rid)
+    if status == 404:
+        return VerificationFailed(msg, reason="not_found", request_id=rid)
+    if status == 400:
+        return KalyxError(f"gateway rejected the request: {msg}", request_id=rid)
+    if status == 401:
+        return DisabledError(msg, reason=reason or "unauthorized", request_id=rid)
+    if status >= 500:
+        return GatewayUnavailable(msg, reason=reason, request_id=rid)
+    return KalyxError(f"gateway error HTTP {status}: {msg}", request_id=rid)
+
+
+def verify_content_binding(chunk_id: str, content: str) -> None:
+    """Verify served content against its committed chunk id.
+
+    The index commits ``chunk_id == sha256(content).hexdigest()[:16]``; a
+    gateway (or middlebox) serving different bytes fails here, after payment
+    but before the caller trusts the body.
+    """
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+    if digest != chunk_id.lower():
+        raise VerificationFailed(
+            "served content does not match the committed chunk id",
+            reason="content_hash_mismatch",
+        )
+
+
+class KalyxClient:
+    """Synchronous KALYX client.
+
+    Args:
+        gateway_url: Base URL of the KALYX gateway (https required unless
+            loopback). Falls back to ``KALYX_GATEWAY_URL``, then the public
+            deployment.
+        keypair: Payer identity — path to a 64-byte JSON keypair file, raw
+            64 bytes, ``solders.Keypair`` or :class:`Wallet`. Falls back to
+            ``KALYX_KEYPAIR_PATH``. Without a keypair the client can probe and
+            browse but never pays.
+        rpc_url: Solana RPC endpoint; falls back to ``KALYX_RPC_URL``, then
+            devnet. Must be devnet/localnet (checked by genesis hash before
+            any payment).
+        max_price_lamports: Default per-call price cap.
+        session_budget_lamports: Total lamports this client may spend.
+        timeout: HTTP timeout (seconds) for gateway and RPC calls.
+        user_agent: Override the identifying User-Agent header.
+    """
+
+    def __init__(
+        self,
+        gateway_url: str | None = None,
+        *,
+        keypair: KeypairSource | None = None,
+        rpc_url: str | None = None,
+        max_price_lamports: int | None = None,
+        session_budget_lamports: int | None = None,
+        timeout: float = 30.0,
+        user_agent: str | None = None,
+        confirm_timeout: float = 60.0,
+        http_client: httpx.Client | None = None,
+    ) -> None:
+        self._cfg = ClientConfig.resolve(
+            gateway_url=gateway_url,
+            keypair=keypair,
+            rpc_url=rpc_url,
+            max_price_lamports=max_price_lamports,
+            session_budget_lamports=session_budget_lamports,
+            timeout=timeout,
+            user_agent=user_agent,
+        )
+        self._confirm_timeout = confirm_timeout
+        self._owns_http = http_client is None
+        self._http = http_client or httpx.Client(
+            headers={"User-Agent": self._cfg.user_agent},
+            timeout=httpx.Timeout(timeout),
+            verify=True,
+            follow_redirects=False,
+        )
+        self._rpc = _chain.RpcClient(self._http, self._cfg.rpc_url)
+        self._config_cache: tuple[float, ProtocolConfig] | None = None
+        self._spent_lamports = 0
+        self._cluster_checked = False
+
+    # -- lifecycle ------------------------------------------------------
+
+    def close(self) -> None:
+        """Close the underlying HTTP session."""
+        if self._owns_http:
+            self._http.close()
+
+    def __enter__(self) -> KalyxClient:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+    @property
+    def address(self) -> str | None:
+        """Base58 payer address, or None when no keypair is configured."""
+        return self._cfg.wallet.address if self._cfg.wallet else None
+
+    @property
+    def spent_lamports(self) -> int:
+        """Lamports this client has paid so far (session spend)."""
+        return self._spent_lamports
+
+    def __repr__(self) -> str:
+        return f"KalyxClient(gateway_url={self._cfg.gateway_url!r}, address={self.address!r})"
+
+    # -- HTTP helpers ---------------------------------------------------
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> tuple[int, Any, httpx.Headers]:
+        url = f"{self._cfg.gateway_url}{path}"
+        try:
+            resp = self._http.request(method, url, json=json_body, params=params)
+        except httpx.HTTPError as exc:
+            raise GatewayUnavailable(f"gateway unreachable: {type(exc).__name__}") from exc
+        try:
+            body = resp.json()
+        except ValueError:
+            body = None
+        return resp.status_code, body, resp.headers
+
+    # -- public API -----------------------------------------------------
+
+    def config(self) -> ProtocolConfig:
+        """Fetch ``GET /v1/config`` (60s client-side cache)."""
+        now = time.monotonic()
+        if self._config_cache and now - self._config_cache[0] < _CONFIG_TTL_SECONDS:
+            return self._config_cache[1]
+        status, body, headers = self._request("GET", "/v1/config")
+        if status != 200 or not isinstance(body, dict):
+            raise _map_error_status(status, body, headers)
+        cfg = ProtocolConfig.from_dict(body)
+        self._config_cache = (now, cfg)
+        return cfg
+
+    def probe(self, query: str) -> ProbeResult:
+        """Probe relevance for a query. Free; never pays.
+
+        Returns a :class:`ProbeResult` whose ``challenge`` is set when the
+        gateway answered 402.
+        """
+        _validate_query(query)
+        status, body, headers = self._request("POST", "/v1/query", json_body={"query": query})
+        if status == 200 and isinstance(body, dict):
+            if body.get("status") != "no_context_found":
+                raise GatewayUnavailable("gateway returned malformed probe result")
+            return ProbeResult(
+                status="no_context_found",
+                similarity_score=_opt_float(body, "similarity_score"),
+                threshold=_opt_float(body, "threshold"),
+                raw=dict(body),
+            )
+        if status == 402:
+            if not isinstance(body, dict):
+                raise GatewayUnavailable("gateway returned malformed challenge")
+            challenge = Challenge.from_dict(body)
+            return ProbeResult(
+                status="payment_required",
+                similarity_score=challenge.similarity_score,
+                threshold=challenge.threshold,
+                challenge=challenge,
+                raw=dict(body),
+            )
+        raise _map_error_status(status, body, headers)
+
+    def query_and_retrieve(
+        self, query: str, *, max_price_lamports: int | None = None
+    ) -> RetrievalResult:
+        """Full flow: probe → verify → pay → confirm → retrieve → verify content.
+
+        Pays only when the gateway finds relevant context, the challenge
+        verifies, and the price is within the per-call cap and session budget.
+        Every failure raises *before* spending when raising after spending
+        would strand funds; a payment that has been broadcast is never
+        retried automatically.
+
+        Raises:
+            PriceExceedsBudget: price above the cap.
+            BudgetExhausted: session budget would be exceeded.
+            InsufficientFunds: payer cannot cover price + rent + fee.
+            PaymentRequired: no keypair configured but payment is needed.
+            VerificationFailed: challenge/content verification failed.
+            ClusterMismatchError: RPC is mainnet/unknown.
+            ChainError: broadcast or confirmation failed.
+        """
+        probe = self.probe(query)
+        if probe.challenge is None:
+            return RetrievalResult(
+                status="no_context_found",
+                similarity_score=probe.similarity_score,
+                raw=probe.raw,
+            )
+        challenge = probe.challenge
+        cfg = self.config()
+        verify_challenge_offchain(challenge, expected_program_id=cfg.program_id)
+        if cfg.program_deployed is False:
+            raise VerificationFailed(
+                "escrow program is not deployed on the gateway's cluster",
+                reason="program_not_deployed",
+            )
+
+        cap = max_price_lamports
+        if cap is None:
+            cap = self._cfg.max_price_lamports
+        if cap is not None and challenge.price_lamports > cap:
+            raise PriceExceedsBudget(
+                f"price {challenge.price_lamports} lamports exceeds the per-call "
+                f"cap of {cap} lamports",
+                challenge=challenge.raw,
+            )
+        self._check_budget(challenge.price_lamports)
+
+        if self._cfg.wallet is None:
+            raise PaymentRequired(
+                "a keypair is required to pay the challenge",
+                challenge=challenge.raw,
+            )
+
+        self._assert_cluster(cfg)
+
+        # On-chain preflight: node exists, active, priced no higher.
+        node = _chain.node_state(self._rpc, challenge.node_address, program_id=challenge.program_id)
+        verify_node_preflight(challenge, node)
+
+        self._assert_funds(challenge.price_lamports)
+
+        # Build, sign, broadcast — then confirm BEFORE retrieving.
+        qhash = query_hash(query)
+        blockhash = _chain.latest_blockhash(self._rpc)
+        payment = build_create_and_fund_tx(
+            wallet=self._cfg.wallet,
+            qhash=qhash,
+            node_address=challenge.node_address,
+            amount_lamports=challenge.price_lamports,
+            recent_blockhash=blockhash,
+            program_id=challenge.program_id,
+        )
+        try:
+            signature = _chain.send_transaction(self._rpc, payment.transaction_b64)
+        except ChainError as exc:
+            raise ChainError(
+                f"failed to broadcast funding transaction: {exc}",
+                signature=payment.signature,
+                retryable=exc.retryable,
+            ) from exc
+        _chain.wait_for_confirmation(self._rpc, signature, timeout=self._confirm_timeout)
+
+        result = self._retrieve(challenge, signature, payment.escrow_address)
+        self._spent_lamports += challenge.price_lamports
+        return result
+
+    # -- internals --------------------------------------------------------
+
+    def _check_budget(self, price: int) -> None:
+        budget = self._cfg.session_budget_lamports
+        if budget is not None and self._spent_lamports + price > budget:
+            raise BudgetExhausted(
+                f"paying {price} lamports would exceed the session budget "
+                f"({self._spent_lamports} + {price} > {budget})",
+                spent_lamports=self._spent_lamports,
+                budget_lamports=budget,
+            )
+
+    def _assert_cluster(self, cfg: ProtocolConfig) -> None:
+        if self._cluster_checked:
+            return
+        genesis = _chain.genesis_hash(self._rpc)
+        _chain.assert_cluster_allowed(genesis, self._cfg.rpc_url)
+        if cfg.cluster_verified and cfg.genesis_hash and genesis and cfg.genesis_hash != genesis:
+            raise ClusterMismatchError(
+                "gateway and client RPC are on different clusters; a payment would never verify"
+            )
+        self._cluster_checked = True
+
+    def _assert_funds(self, price: int) -> None:
+        assert self._cfg.wallet is not None
+        try:
+            rent = _chain.minimum_rent(self._rpc, _chain.ESCROW_ACCOUNT_LEN)
+        except ChainError:
+            rent = 2_000_000  # conservative fallback when the RPC won't say
+        required = price + rent + TX_FEE_LAMPORTS
+        try:
+            available = _chain.balance(self._rpc, self._cfg.wallet.address)
+        except ChainError as exc:
+            raise ChainError(f"could not read payer balance: {exc}") from exc
+        if available < required:
+            raise InsufficientFunds(
+                f"payer holds {available} lamports but the payment needs "
+                f"{required} (price {price} + rent {rent} + fee {TX_FEE_LAMPORTS})",
+                required_lamports=required,
+                available_lamports=available,
+            )
+
+    def _retrieve(
+        self, challenge: Challenge, signature: str, escrow_address: str
+    ) -> RetrievalResult:
+        status, body, headers = self._request(
+            "POST",
+            "/v1/retrieve",
+            json_body={
+                "chunk_id": challenge.chunk_id,
+                "tx_signature": signature,
+                "escrow_address": escrow_address,
+            },
+        )
+        if status != 200 or not isinstance(body, dict):
+            raise _map_error_status(status, body, headers)
+        if body.get("status") != "access_granted":
+            raise GatewayUnavailable("gateway returned malformed retrieve result")
+        content = body.get("decrypted_content")
+        if not isinstance(content, str):
+            raise GatewayUnavailable("gateway returned malformed retrieve content")
+        verify_content_binding(challenge.chunk_id, content)
+        settlement = body.get("settlement")
+        settle_status = None
+        if isinstance(settlement, dict):
+            settled = settlement.get("settled")
+            if settled is True:
+                settle_status = "settled"
+            elif settled is False:
+                settle_status = "pending"
+        verification = body.get("verification")
+        safety = body.get("content_safety")
+        return RetrievalResult(
+            status="access_granted",
+            context=content,
+            citation=body.get("citation") if isinstance(body.get("citation"), str) else None,
+            content_hash=challenge.content_hash or None,
+            price_lamports=challenge.price_lamports,
+            escrow_address=escrow_address,
+            funding_signature=signature,
+            settle_status=settle_status,
+            receipt={
+                "verification": verification if isinstance(verification, dict) else {},
+                "settlement": settlement if isinstance(settlement, dict) else None,
+            },
+            chunk_id=challenge.chunk_id,
+            title=body.get("title") if isinstance(body.get("title"), str) else challenge.title,
+            domain=body.get("domain") if isinstance(body.get("domain"), str) else challenge.domain,
+            similarity_score=challenge.similarity_score,
+            content_safety=dict(safety) if isinstance(safety, dict) else {},
+            raw=dict(body),
+        )
+
+
+def _validate_query(query: str) -> None:
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("query must be a non-empty string")
+    if len(query) > 512:
+        raise ValueError("query exceeds the gateway's 512-character limit")
+
+
+def _opt_float(d: dict[str, Any], key: str) -> float | None:
+    v = d.get(key)
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    return None
