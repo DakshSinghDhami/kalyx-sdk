@@ -305,7 +305,7 @@ def balance(rpc: RpcClient, address: str) -> int:
     res = rpc.call("getBalance", [address])
     if not isinstance(res, dict) or not isinstance(res.get("value"), int):
         raise ChainError("RPC getBalance returned malformed result")
-    return res["value"]
+    return int(res["value"])
 
 
 async def abalance(rpc: AsyncRpcClient, address: str) -> int:
@@ -313,7 +313,7 @@ async def abalance(rpc: AsyncRpcClient, address: str) -> int:
     res = await rpc.call("getBalance", [address])
     if not isinstance(res, dict) or not isinstance(res.get("value"), int):
         raise ChainError("RPC getBalance returned malformed result")
-    return res["value"]
+    return int(res["value"])
 
 
 def current_slot(rpc: RpcClient) -> int:
@@ -458,18 +458,24 @@ def signature_status(rpc: RpcClient, signature: str) -> dict[str, Any] | None:
     """Confirmation status for one signature, or None when unseen."""
     res = rpc.call("getSignatureStatuses", [[signature], {"searchTransactionHistory": True}])
     try:
-        return res["value"][0]
+        value = res["value"][0]
     except (TypeError, KeyError, IndexError) as exc:
         raise ChainError("RPC getSignatureStatuses returned malformed result") from exc
+    if value is not None and not isinstance(value, dict):
+        raise ChainError("RPC getSignatureStatuses returned malformed status entry")
+    return value
 
 
 async def asignature_status(rpc: AsyncRpcClient, signature: str) -> dict[str, Any] | None:
     """Async variant of :func:`signature_status`."""
     res = await rpc.call("getSignatureStatuses", [[signature], {"searchTransactionHistory": True}])
     try:
-        return res["value"][0]
+        value = res["value"][0]
     except (TypeError, KeyError, IndexError) as exc:
         raise ChainError("RPC getSignatureStatuses returned malformed result") from exc
+    if value is not None and not isinstance(value, dict):
+        raise ChainError("RPC getSignatureStatuses returned malformed status entry")
+    return value
 
 
 def wait_for_confirmation(

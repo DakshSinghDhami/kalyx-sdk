@@ -261,7 +261,8 @@ _RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 
 def _request_id(headers: httpx.Headers) -> str | None:
-    return headers.get("x-request-id") or headers.get("x-kalyx-request-id")
+    rid = headers.get("x-request-id") or headers.get("x-kalyx-request-id")
+    return rid if isinstance(rid, str) else None
 
 
 def parse_retry_after(headers: httpx.Headers, body: dict[str, Any] | None = None) -> float | None:
@@ -279,7 +280,7 @@ def parse_retry_after(headers: httpx.Headers, body: dict[str, Any] | None = None
 
         try:
             dt = parsedate_to_datetime(raw)
-            return max(0.0, dt.timestamp() - time.time())
+            return float(max(0.0, dt.timestamp() - time.time()))
         except (TypeError, ValueError):
             pass
     if body is not None:
@@ -669,7 +670,8 @@ class KalyxClient:
             raise PaymentRequired("a keypair is required to claim a refund")
         cfg = self.config()
         self._assert_cluster(cfg)
-        state = _chain.escrow_state(self._rpc, escrow_address, program_id=cfg.program_id)
+        program_id = cfg.program_id or DEFAULT_PROGRAM_ID
+        state = _chain.escrow_state(self._rpc, escrow_address, program_id=program_id)
         if state is None:
             raise VerificationFailed(
                 "escrow account does not exist on-chain", reason="escrow_not_found"
@@ -696,7 +698,7 @@ class KalyxClient:
             wallet=self._cfg.wallet,
             qhash=state.query_hash,
             recent_blockhash=blockhash,
-            program_id=cfg.program_id,
+            program_id=program_id,
         )
         if payment.escrow_address != escrow_address:
             raise VerificationFailed(

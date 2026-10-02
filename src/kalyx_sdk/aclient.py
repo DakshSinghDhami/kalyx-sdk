@@ -19,7 +19,6 @@ from . import chain as _chain
 from .budget import BudgetTracker
 from .client import (
     ClientConfig,
-    KeypairSource,
     _map_error_status,
     _opt_float,
     _validate_query,
@@ -36,7 +35,12 @@ from .errors import (
     PriceExceedsBudget,
     VerificationFailed,
 )
-from .escrow import build_create_and_fund_tx, build_refund_tx, query_hash
+from .escrow import (
+    DEFAULT_PROGRAM_ID,
+    build_create_and_fund_tx,
+    build_refund_tx,
+    query_hash,
+)
 from .models import (
     Challenge,
     NodeDetail,
@@ -47,6 +51,7 @@ from .models import (
     RetrievalResult,
 )
 from .retry import RetryPolicy, arun_with_retries
+from .wallet import KeypairSource
 
 _CONFIG_TTL_SECONDS = 60.0
 _RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
@@ -158,7 +163,7 @@ class AsyncKalyxClient:
                 raise _map_error_status(status, body, headers)
             return status, body, headers
 
-        return await arun_with_retries(_do, self._retry)  # type: ignore[return-value]
+        return await arun_with_retries(_do, self._retry)
 
     # -- public API -----------------------------------------------------
 
@@ -297,7 +302,7 @@ class AsyncKalyxClient:
             ) from exc
         await _chain.await_for_confirmation(self._rpc, signature, timeout=self._confirm_timeout)
 
-        result = await arun_with_retries(  # type: ignore[assignment]
+        result: RetrievalResult = await arun_with_retries(
             lambda: self._retrieve(challenge, signature, payment.escrow_address),
             self._retry,
         )
@@ -312,7 +317,8 @@ class AsyncKalyxClient:
             raise PaymentRequired("a keypair is required to claim a refund")
         cfg = await self.config()
         await self._assert_cluster(cfg)
-        state = await _chain.aescrow_state(self._rpc, escrow_address, program_id=cfg.program_id)
+        program_id = cfg.program_id or DEFAULT_PROGRAM_ID
+        state = await _chain.aescrow_state(self._rpc, escrow_address, program_id=program_id)
         if state is None:
             raise VerificationFailed(
                 "escrow account does not exist on-chain", reason="escrow_not_found"
@@ -339,7 +345,7 @@ class AsyncKalyxClient:
             wallet=self._cfg.wallet,
             qhash=state.query_hash,
             recent_blockhash=blockhash,
-            program_id=cfg.program_id,
+            program_id=program_id,
         )
         if payment.escrow_address != escrow_address:
             raise VerificationFailed(

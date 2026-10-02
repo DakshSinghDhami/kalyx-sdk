@@ -28,6 +28,11 @@ def _req_str(d: dict[str, Any], key: str, what: str) -> str:
     return v
 
 
+def _str_or(d: dict[str, Any], key: str, default: str) -> str:
+    v = d.get(key)
+    return v if isinstance(v, str) else default
+
+
 def _opt_str(d: dict[str, Any], key: str) -> str | None:
     v = d.get(key)
     return v if isinstance(v, str) and v else None
@@ -182,14 +187,12 @@ class Challenge:
             program_id=program_id,
             node_address=node_address if isinstance(node_address, str) else "",
             content_hash=content_hash if isinstance(content_hash, str) else "",
-            title=d.get("title") if isinstance(d.get("title"), str) else "",
-            domain=d.get("domain") if isinstance(d.get("domain"), str) else "",
+            title=_str_or(d, "title", ""),
+            domain=_str_or(d, "domain", ""),
             author_wallet=_opt_str(d, "author_wallet"),
             similarity_score=_opt_float(por or {}, "similarity_score"),
             threshold=_opt_float(por or {}, "confidence_threshold"),
-            free_preview=(por or {}).get("free_preview")
-            if isinstance((por or {}).get("free_preview"), str)
-            else "",
+            free_preview=_str_or(por or {}, "free_preview", ""),
             raw=dict(d),
         )
 
@@ -296,7 +299,7 @@ class NodeSummary:
         registered = d.get("registered")
         return cls(
             node_id=node_id,
-            title=d.get("title") if isinstance(d.get("title"), str) else "",
+            title=_str_or(d, "title", ""),
             domain=_opt_str(d, "domain"),
             category=_opt_str(d, "category"),
             publisher_wallet=_opt_str(d, "publisher_wallet"),

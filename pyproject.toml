@@ -105,7 +105,9 @@ ignore = [
 "examples/**" = ["S104", "T201"]
 
 [tool.mypy]
-python_version = "3.10"
+# Stub parse target kept at 3.12 so transitive typed deps (numpy) parse;
+# runtime 3.10 compat is guarded by the CI test matrix instead.
+python_version = "3.12"
 mypy_path = "src"
 packages = ["kalyx_sdk"]
 strict = true
@@ -114,3 +116,8 @@ warn_unreachable = true
 [[tool.mypy.overrides]]
 module = ["langchain_core.*", "llama_index.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["numpy.*", "numpy"]
+ignore_errors = true
+follow_imports = "skip"

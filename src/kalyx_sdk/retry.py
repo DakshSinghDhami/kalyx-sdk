@@ -10,7 +10,7 @@ confirmation instead.
 import asyncio
 import random
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TypeVar
 
@@ -73,11 +73,11 @@ def run_with_retries(fn: Callable[[], T], policy: RetryPolicy) -> T:
     raise AssertionError("unreachable")  # pragma: no cover
 
 
-async def arun_with_retries(fn: Callable[[], "object"], policy: RetryPolicy) -> object:
+async def arun_with_retries(fn: Callable[[], Awaitable[T]], policy: RetryPolicy) -> T:
     """Async variant of :func:`run_with_retries`."""
     for attempt in range(policy.attempts):
         try:
-            return await fn()  # type: ignore[misc]
+            return await fn()
         except KalyxError as exc:
             if attempt == policy.attempts - 1 or not is_retryable(exc):
                 raise

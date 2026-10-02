@@ -6,7 +6,7 @@ to LlamaIndex agents. Retrieved text is data, never instructions — nodes
 carry ``trust=untrusted`` metadata.
 """
 
-from typing import Any, ClassVar
+from typing import Any
 
 from .client import KalyxClient
 from .errors import KalyxError
@@ -99,7 +99,8 @@ class KalyxLlamaIndexRetriever(BaseRetriever):
 class KalyxToolSpec(BaseToolSpec):
     """Tool spec exposing paid retrieval to LlamaIndex agents."""
 
-    spec_functions: ClassVar[list[str]] = ["retrieve"]
+    # Base class declares an instance variable; match its (invariant) type.
+    spec_functions: list[str | tuple[str, str]] = ["retrieve"]  # noqa: RUF012
 
     def __init__(self, client: KalyxClient, *, max_price_lamports: int | None = None) -> None:
         _require()

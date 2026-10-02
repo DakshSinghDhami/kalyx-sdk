@@ -94,7 +94,9 @@ class KalyxRetriever(BaseRetriever):
             client = KalyxClient(
                 gateway_url=gateway_url, max_price_lamports=max_price_lamports, **kwargs
             )
-        super().__init__(
+        # BaseRetriever is a pydantic model; extra fields are declared on the
+        # class above, and pydantic accepts them as kwargs at runtime.
+        super().__init__(  # type: ignore[call-arg]
             client=client,
             max_price_lamports=max_price_lamports,
             include_no_context_document=include_no_context_document,
