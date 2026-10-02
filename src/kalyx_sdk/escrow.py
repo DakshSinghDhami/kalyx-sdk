@@ -47,6 +47,9 @@ SEED_CONFIG = b"config"
 #: Separator between the user's query and the per-run nonce (D5).
 NONCE_SEPARATOR = "\x1f"
 
+#: Maximum lamport amount encodable in an instruction's u64 field.
+_U64_MAX = 2**64 - 1
+
 
 def ix_discriminator(name: str) -> bytes:
     """Anchor instruction discriminator: sha256("global:<name>")[:8]."""
@@ -111,6 +114,8 @@ def create_and_fund_ix(
     """
     if amount_lamports <= 0:
         raise ConfigError("amount_lamports must be positive")
+    if amount_lamports > _U64_MAX:
+        raise ConfigError("amount_lamports exceeds the u64 range of the instruction")
     program_pk = program_id if isinstance(program_id, Pubkey) else Pubkey.from_string(program_id)
     node_pk = node_address if isinstance(node_address, Pubkey) else Pubkey.from_string(node_address)
     escrow_pda, _bump = derive_escrow_pda(consumer, qhash, program_pk)

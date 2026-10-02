@@ -96,6 +96,23 @@ def test_onchain_content_hash_differs_from_challenge_rejected():
         assert stack.send_count == 0
 
 
+def test_malformed_chunk_id_rejected_pre_payment():
+    sc = Scenario(challenge_chunk_id="!!!not-hex!!!")
+    with EvilGateway(sc) as stack, make_client(stack) as client:
+        with pytest.raises(VerificationFailed) as ei:
+            client.query_and_retrieve("settlement")
+        assert ei.value.reason == "bad_chunk_id"
+        assert stack.send_count == 0
+
+
+def test_absurd_price_never_reaches_a_transaction():
+    sc = Scenario(query_price=2**64)  # exceeds the u64 instruction field
+    with EvilGateway(sc) as stack, make_client(stack) as client:
+        with pytest.raises(KalyxError):  # typed error, never OverflowError
+            client.query_and_retrieve("settlement")
+        assert stack.send_count == 0
+
+
 def test_zero_price_challenge_rejected():
     sc = Scenario(query_price=0)
     with EvilGateway(sc) as stack, make_client(stack) as client:

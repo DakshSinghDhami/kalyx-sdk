@@ -155,6 +155,8 @@ def verify_challenge_offchain(
       address when the config could not be fetched);
     * the challenge names an on-chain ``node_address`` (a node that is not
       registered on-chain cannot be paid);
+    * ``chunk_id`` is 16 hex chars (it is the post-payment integrity
+      commitment; a malformed one could never match);
     * ``content_hash`` is 32 bytes of hex;
     * the node PDA re-derives from ``(author, content_hash)`` — the author is
       ``author_wallet`` when the gateway reports it, else
@@ -172,6 +174,13 @@ def verify_challenge_offchain(
             "challenge names no on-chain node (node_address empty); "
             "the node is not registered, so it cannot be paid",
             reason="node_not_registered",
+        )
+    cid = challenge.chunk_id
+    if len(cid) != 16 or any(c not in _HEX64 for c in cid):
+        raise VerificationFailed(
+            "challenge chunk_id is not 16 hex chars, so it can never match "
+            "the served content's integrity commitment",
+            reason="bad_chunk_id",
         )
     ch = challenge.content_hash
     if len(ch) != 64 or any(c not in _HEX64 for c in ch):
