@@ -242,12 +242,15 @@ from .errors import (  # noqa: E402
 )
 from .escrow import build_create_and_fund_tx, query_hash  # noqa: E402
 from .models import ProbeResult, ProtocolConfig, RetrievalResult  # noqa: E402
+from .retry import RetryPolicy, run_with_retries  # noqa: E402
 
 #: Lamports paid in fees for a one-signature transaction.
 TX_FEE_LAMPORTS = 5_000
 
 _CONFIG_TTL_SECONDS = 60.0
 _DISABLED_REASONS = {"demo_disabled", "cluster_refused"}
+#: Gateway statuses worth retrying (transient by definition).
+_RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 
 def _request_id(headers: httpx.Headers) -> str | None:
@@ -350,6 +353,8 @@ class KalyxClient:
         session_budget_lamports: Total lamports this client may spend.
         timeout: HTTP timeout (seconds) for gateway and RPC calls.
         user_agent: Override the identifying User-Agent header.
+        retry_policy: Backoff policy for transient failures on idempotent
+            calls (probe, config, retrieve). Payments are never retried.
     """
 
     def __init__(
@@ -363,6 +368,7 @@ class KalyxClient:
         timeout: float = 30.0,
         user_agent: str | None = None,
         confirm_timeout: float = 60.0,
+        retry_policy: RetryPolicy | None = None,
         http_client: httpx.Client | None = None,
     ) -> None:
         self._cfg = ClientConfig.resolve(
@@ -375,6 +381,7 @@ class KalyxClient:
             user_agent=user_agent,
         )
         self._confirm_timeout = confirm_timeout
+        self._retry = retry_policy or RetryPolicy()
         self._owns_http = http_client is None
         self._http = http_client or httpx.Client(
             headers={"User-Agent": self._cfg.user_agent},
@@ -439,6 +446,30 @@ class KalyxClient:
             body = None
         return resp.status_code, body, resp.headers
 
+    def _request_retrying(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        ok_statuses: frozenset[int] = frozenset(),
+    ) -> tuple[int, Any, httpx.Headers]:
+        """``_request`` with retries on transient statuses and network errors.
+
+        Statuses in ``ok_statuses`` are returned even when non-2xx (402 for
+        probe). Retryable statuses raise the mapped error so the policy can
+        decide; on the final attempt the mapped error propagates.
+        """
+
+        def _do() -> tuple[int, Any, httpx.Headers]:
+            status, body, headers = self._request(method, path, json_body=json_body, params=params)
+            if status in _RETRYABLE_STATUSES and status not in ok_statuses:
+                raise _map_error_status(status, body, headers)
+            return status, body, headers
+
+        return run_with_retries(_do, self._retry)
+
     # -- public API -----------------------------------------------------
 
     def config(self) -> ProtocolConfig:
@@ -446,7 +477,7 @@ class KalyxClient:
         now = time.monotonic()
         if self._config_cache and now - self._config_cache[0] < _CONFIG_TTL_SECONDS:
             return self._config_cache[1]
-        status, body, headers = self._request("GET", "/v1/config")
+        status, body, headers = self._request_retrying("GET", "/v1/config")
         if status != 200 or not isinstance(body, dict):
             raise _map_error_status(status, body, headers)
         cfg = ProtocolConfig.from_dict(body)
@@ -460,7 +491,9 @@ class KalyxClient:
         gateway answered 402.
         """
         _validate_query(query)
-        status, body, headers = self._request("POST", "/v1/query", json_body={"query": query})
+        status, body, headers = self._request_retrying(
+            "POST", "/v1/query", json_body={"query": query}, ok_statuses=frozenset({402})
+        )
         if status == 200 and isinstance(body, dict):
             if body.get("status") != "no_context_found":
                 raise GatewayUnavailable("gateway returned malformed probe result")
@@ -559,7 +592,12 @@ class KalyxClient:
             ) from exc
         _chain.wait_for_confirmation(self._rpc, signature, timeout=self._confirm_timeout)
 
-        result = self._retrieve(challenge, signature, payment.escrow_address)
+        # Retrieve is idempotent for the same escrow + signature, so it is
+        # safe to retry on transient failures.
+        result = run_with_retries(
+            lambda: self._retrieve(challenge, signature, payment.escrow_address),
+            self._retry,
+        )
         self._budget.record(challenge.price_lamports)
         return result
 
