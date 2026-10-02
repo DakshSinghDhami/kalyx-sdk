@@ -618,25 +618,39 @@ class KalyxClient:
 
         self._assert_funds(challenge.price_lamports)
 
-        # Build, sign, broadcast — then confirm BEFORE retrieving.
-        qhash = query_hash(query)
-        blockhash = _chain.latest_blockhash(self._rpc)
-        payment = build_create_and_fund_tx(
-            wallet=self._cfg.wallet,
-            qhash=qhash,
-            node_address=challenge.node_address,
-            amount_lamports=challenge.price_lamports,
-            recent_blockhash=blockhash,
-            program_id=challenge.program_id,
-        )
+        # Reserve the budget BEFORE signing; the hold is released only when
+        # the payment provably never reached the wire. This makes the
+        # check-then-pay sequence atomic across threads sharing this client.
+        self._budget.reserve(challenge.price_lamports)
         try:
-            signature = _chain.send_transaction(self._rpc, payment.transaction_b64)
-        except ChainError as exc:
-            raise ChainError(
-                f"failed to broadcast funding transaction: {exc}",
-                signature=payment.signature,
-                retryable=exc.retryable,
-            ) from exc
+            qhash = query_hash(query)
+            blockhash = _chain.latest_blockhash(self._rpc)
+            payment = build_create_and_fund_tx(
+                wallet=self._cfg.wallet,
+                qhash=qhash,
+                node_address=challenge.node_address,
+                amount_lamports=challenge.price_lamports,
+                recent_blockhash=blockhash,
+                program_id=challenge.program_id,
+            )
+            try:
+                signature = _chain.send_transaction(self._rpc, payment.transaction_b64)
+            except ChainError as exc:
+                raise ChainError(
+                    f"failed to broadcast funding transaction: {exc}",
+                    signature=payment.signature,
+                    retryable=exc.retryable,
+                ) from exc
+        except BaseException:
+            self._budget.release(challenge.price_lamports)
+            raise
+        # Broadcast accepted: the lamports are in flight regardless of what
+        # happens next, so the reservation becomes spend now (a confirmation
+        # timeout still leaves an on-chain-payment possibility).
+        self._budget.commit(challenge.price_lamports)
+
+        # Confirm BEFORE retrieving: the gateway's verifier reads at
+        # confirmed commitment, so retrieving earlier would race it.
         _chain.wait_for_confirmation(self._rpc, signature, timeout=self._confirm_timeout)
 
         # Retrieve is idempotent for the same escrow + signature, so it is
@@ -645,7 +659,6 @@ class KalyxClient:
             lambda: self._retrieve(challenge, signature, payment.escrow_address),
             self._retry,
         )
-        self._budget.record(challenge.price_lamports)
         return result
 
     def refund_expired_escrow(self, escrow_address: str) -> RefundResult:
