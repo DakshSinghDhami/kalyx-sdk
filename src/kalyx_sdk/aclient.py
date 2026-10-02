@@ -37,7 +37,14 @@ from .errors import (
     VerificationFailed,
 )
 from .escrow import build_create_and_fund_tx, query_hash
-from .models import Challenge, ProbeResult, ProtocolConfig, RetrievalResult
+from .models import (
+    Challenge,
+    NodeDetail,
+    NodePage,
+    ProbeResult,
+    ProtocolConfig,
+    RetrievalResult,
+)
 from .retry import RetryPolicy, arun_with_retries
 
 _CONFIG_TTL_SECONDS = 60.0
@@ -193,6 +200,38 @@ class AsyncKalyxClient:
                 raw=dict(body),
             )
         raise _map_error_status(status, body, headers)
+
+    async def list_nodes(
+        self,
+        *,
+        q: str | None = None,
+        license: str | None = None,
+        limit: int | None = None,
+        cursor: int | None = None,
+    ) -> NodePage:
+        """Browse the public node catalog (``GET /v1/nodes``). Free."""
+        params: dict[str, Any] = {}
+        if q:
+            params["q"] = q
+        if license:
+            params["license"] = license
+        if limit is not None:
+            params["limit"] = limit
+        if cursor is not None:
+            params["cursor"] = cursor
+        status, body, headers = await self._request_retrying("GET", "/v1/nodes", params=params)
+        if status != 200 or not isinstance(body, dict):
+            raise _map_error_status(status, body, headers)
+        return NodePage.from_dict(body)
+
+    async def node_detail(self, node_id: str) -> NodeDetail:
+        """Fetch one node's metadata + live verification report. Free."""
+        if not node_id or not node_id.strip():
+            raise ValueError("node_id must be non-empty")
+        status, body, headers = await self._request_retrying("GET", f"/v1/nodes/{node_id}")
+        if status != 200 or not isinstance(body, dict):
+            raise _map_error_status(status, body, headers)
+        return NodeDetail.from_dict(body)
 
     async def query_and_retrieve(
         self, query: str, *, max_price_lamports: int | None = None

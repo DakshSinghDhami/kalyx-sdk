@@ -241,7 +241,13 @@ from .errors import (  # noqa: E402
     ReplayRejected,
 )
 from .escrow import build_create_and_fund_tx, query_hash  # noqa: E402
-from .models import ProbeResult, ProtocolConfig, RetrievalResult  # noqa: E402
+from .models import (  # noqa: E402
+    NodeDetail,
+    NodePage,
+    ProbeResult,
+    ProtocolConfig,
+    RetrievalResult,
+)
 from .retry import RetryPolicy, run_with_retries  # noqa: E402
 
 #: Lamports paid in fees for a one-signature transaction.
@@ -515,6 +521,45 @@ class KalyxClient:
                 raw=dict(body),
             )
         raise _map_error_status(status, body, headers)
+
+    def list_nodes(
+        self,
+        *,
+        q: str | None = None,
+        license: str | None = None,
+        limit: int | None = None,
+        cursor: int | None = None,
+    ) -> NodePage:
+        """Browse the public node catalog (``GET /v1/nodes``). Free.
+
+        Returns one page; pass ``page.next_cursor`` as ``cursor`` to page on.
+        """
+        params: dict[str, Any] = {}
+        if q:
+            params["q"] = q
+        if license:
+            params["license"] = license
+        if limit is not None:
+            params["limit"] = limit
+        if cursor is not None:
+            params["cursor"] = cursor
+        status, body, headers = self._request_retrying("GET", "/v1/nodes", params=params)
+        if status != 200 or not isinstance(body, dict):
+            raise _map_error_status(status, body, headers)
+        return NodePage.from_dict(body)
+
+    def node_detail(self, node_id: str) -> NodeDetail:
+        """Fetch one node's metadata + live verification report. Free.
+
+        Raises :class:`VerificationFailed` (``reason="not_found"``) for an
+        unknown node id.
+        """
+        if not node_id or not node_id.strip():
+            raise ValueError("node_id must be non-empty")
+        status, body, headers = self._request_retrying("GET", f"/v1/nodes/{node_id}")
+        if status != 200 or not isinstance(body, dict):
+            raise _map_error_status(status, body, headers)
+        return NodeDetail.from_dict(body)
 
     def query_and_retrieve(
         self, query: str, *, max_price_lamports: int | None = None
