@@ -1,6 +1,6 @@
 # SDK Status
 
-Tracking file for the 0.1.0 build. Moved to `docs/dev/` at release.
+Tracking file from the 0.1.0 build (archived in `docs/dev/`).
 
 - [x] Repo scaffold (pyproject/hatchling, MIT license, gitignore, vendored IDL)
 - [x] docs/design.md
