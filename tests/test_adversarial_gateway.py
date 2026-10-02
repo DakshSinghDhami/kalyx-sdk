@@ -211,6 +211,13 @@ def test_redirect_to_other_host_not_followed():
         assert stack.state.query_attempts == 1
 
 
+def test_wrong_content_type_html_is_typed_error():
+    sc = Scenario(query_mode="html")
+    with EvilGateway(sc) as stack, make_client(stack) as client:
+        with pytest.raises(GatewayUnavailable):
+            client.probe("settlement")
+
+
 def test_huge_json_body_does_not_hang_or_crash():
     sc = Scenario(query_mode="huge")  # 8 MiB no_context payload
     with EvilGateway(sc) as stack, make_client(stack) as client:

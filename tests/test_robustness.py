@@ -16,6 +16,7 @@ from kalyx_sdk.client import parse_retry_after
 from kalyx_sdk.errors import (
     ChainError,
     ClusterMismatchError,
+    GatewayUnavailable,
 )
 from kalyx_sdk.retry import RetryPolicy
 
@@ -130,6 +131,79 @@ def test_commitment_flapping_is_tolerated(payer):
     client = make_client(payer)
     assert client.query_and_retrieve("settlement").status == "access_granted"
     assert polls["n"] == 4
+
+
+# --- malformed / hostile transport payloads ------------------------------------
+
+
+@respx.mock
+def test_probe_200_wrong_content_type_is_unavailable_not_crash(payer):
+    respx.post(f"{GATEWAY}/v1/query").respond(
+        200,
+        content=b"<html><body>proxy error</body></html>",
+        headers={"Content-Type": "text/html"},
+    )
+    client = make_client(payer)
+    with pytest.raises(GatewayUnavailable):
+        client.probe("settlement")
+
+
+@respx.mock
+def test_probe_200_truncated_json_is_unavailable(payer):
+    respx.post(f"{GATEWAY}/v1/query").respond(200, content=b'{"status": "no_cont')
+    client = make_client(payer)
+    with pytest.raises(GatewayUnavailable):
+        client.probe("settlement")
+
+
+@respx.mock
+def test_retrieve_200_non_json_after_payment(payer):
+    """A paid retrieve answering junk must raise a typed error, not crash."""
+    _wire_defaults()
+    respx.post(f"{GATEWAY}/v1/retrieve").respond(200, content=b"\x89PNG\r\n")
+    rpc = FakeRpc()
+    respx.post(RPC_URL).mock(side_effect=rpc.handler)
+    client = make_client(payer)
+    with pytest.raises(GatewayUnavailable):
+        client.query_and_retrieve("settlement")
+
+
+@respx.mock
+def test_config_200_non_dict_is_unavailable(payer):
+    respx.get(f"{GATEWAY}/v1/config").respond(200, content=b"[1,2,3]")
+    client = make_client(payer)
+    with pytest.raises(GatewayUnavailable):
+        client.config()
+
+
+# --- redirects are never followed (no credential leak) -------------------------
+
+
+@respx.mock
+def test_probe_redirect_to_other_host_not_followed(payer):
+    respx.post(f"{GATEWAY}/v1/query").respond(
+        302, headers={"Location": "http://evil.invalid/v1/query"}
+    )
+    evil = respx.post("http://evil.invalid/v1/query").respond(200, json=no_context_body())
+    client = make_client(payer)
+    with pytest.raises(GatewayUnavailable):
+        client.probe("settlement")
+    assert evil.call_count == 0
+
+
+@respx.mock
+def test_retrieve_redirect_after_payment_not_followed(payer):
+    _wire_defaults()
+    respx.post(f"{GATEWAY}/v1/retrieve").respond(
+        302, headers={"Location": "http://evil.invalid/steal"}
+    )
+    evil = respx.post("http://evil.invalid/steal").respond(200, json=retrieve_ok_body())
+    rpc = FakeRpc()
+    respx.post(RPC_URL).mock(side_effect=rpc.handler)
+    client = make_client(payer)
+    with pytest.raises(GatewayUnavailable):
+        client.query_and_retrieve("settlement")
+    assert evil.call_count == 0  # the payment credential never left the host
 
 
 # --- oversized but valid payloads -------------------------------------------------

@@ -325,6 +325,15 @@ def _map_error_status(status: int, body: Any, headers: httpx.Headers) -> KalyxEr
         return DisabledError(msg, reason=reason or "unauthorized", request_id=rid)
     if status >= 500:
         return GatewayUnavailable(msg, reason=reason, request_id=rid)
+    if status < 400:
+        # A "success" or redirect status whose body we cannot use: the gateway
+        # (or a middlebox) is misbehaving. Redirects are never followed
+        # (follow_redirects=False), so they surface here instead of leaking
+        # payment credentials to another host.
+        return GatewayUnavailable(
+            f"gateway returned HTTP {status} with an unusable success body",
+            request_id=rid,
+        )
     return KalyxError(f"gateway error HTTP {status}: {msg}", request_id=rid)
 
 
