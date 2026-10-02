@@ -1,0 +1,1584 @@
+{
+  "address": "GKaQ7LJbVQ6pUtSq3oWR1WZvyE7h9PMM7SF2vLTpGAS2",
+  "metadata": {
+    "name": "kalyx",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "On-Chain HTTP 402 Knowledge Escrow & Citation Receipt Protocol on Solana"
+  },
+  "instructions": [
+    {
+      "name": "create_and_fund",
+      "docs": [
+        "Creates and funds an escrow in a single instruction. The escrow starts in",
+        "the `Funded` state; the amount is locked from the consumer."
+      ],
+      "discriminator": [
+        81,
+        241,
+        83,
+        179,
+        19,
+        203,
+        167,
+        64
+      ],
+      "accounts": [
+        {
+          "name": "escrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "consumer"
+              },
+              {
+                "kind": "arg",
+                "path": "query_hash"
+              }
+            ]
+          }
+        },
+        {
+          "name": "knowledge_node",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  111,
+                  100,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "knowledge_node.author",
+                "account": "KnowledgeNode"
+              },
+              {
+                "kind": "account",
+                "path": "knowledge_node.content_hash",
+                "account": "KnowledgeNode"
+              }
+            ]
+          }
+        },
+        {
+          "name": "consumer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "query_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "create_escrow",
+      "docs": [
+        "Creates an empty escrow session PDA for a query. The escrow is owned by",
+        "the program and is keyed by (consumer, query_hash)."
+      ],
+      "discriminator": [
+        253,
+        215,
+        165,
+        116,
+        36,
+        108,
+        68,
+        80
+      ],
+      "accounts": [
+        {
+          "name": "escrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "consumer"
+              },
+              {
+                "kind": "arg",
+                "path": "query_hash"
+              }
+            ]
+          }
+        },
+        {
+          "name": "knowledge_node",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  111,
+                  100,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "knowledge_node.author",
+                "account": "KnowledgeNode"
+              },
+              {
+                "kind": "account",
+                "path": "knowledge_node.content_hash",
+                "account": "KnowledgeNode"
+              }
+            ]
+          }
+        },
+        {
+          "name": "consumer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "query_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "deposit_stake",
+      "docs": [
+        "Deposits (or tops up) author collateral on a knowledge node. The stake",
+        "backs content disputes and can be slashed by `dispute_escrow`."
+      ],
+      "discriminator": [
+        160,
+        167,
+        9,
+        220,
+        74,
+        243,
+        228,
+        43
+      ],
+      "accounts": [
+        {
+          "name": "knowledge_node",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  111,
+                  100,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "author"
+              },
+              {
+                "kind": "account",
+                "path": "knowledge_node.content_hash",
+                "account": "KnowledgeNode"
+              }
+            ]
+          }
+        },
+        {
+          "name": "author",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "knowledge_node"
+          ]
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "dispute_escrow",
+      "docs": [
+        "Disputes a funded escrow. The consumer is always refunded the escrowed",
+        "amount (escrow account is closed). If `slash_stake` is set, the node",
+        "author's staked collateral is slashed to the treasury and the node is",
+        "deactivated. Adjudicated by the protocol authority (admin)."
+      ],
+      "discriminator": [
+        198,
+        174,
+        139,
+        70,
+        87,
+        79,
+        181,
+        139
+      ],
+      "accounts": [
+        {
+          "name": "protocol_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "escrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "escrow.consumer",
+                "account": "Escrow"
+              },
+              {
+                "kind": "account",
+                "path": "escrow.query_hash",
+                "account": "Escrow"
+              }
+            ]
+          }
+        },
+        {
+          "name": "knowledge_node",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  111,
+                  100,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "knowledge_node.author",
+                "account": "KnowledgeNode"
+              },
+              {
+                "kind": "account",
+                "path": "knowledge_node.content_hash",
+                "account": "KnowledgeNode"
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "writable": true
+        },
+        {
+          "name": "consumer",
+          "writable": true
+        },
+        {
+          "name": "admin",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "reason",
+          "type": "string"
+        },
+        {
+          "name": "slash_stake",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "fund_escrow",
+      "docs": [
+        "Funds an existing escrow with native lamports locked from the consumer",
+        "(AI agent). Moves the escrow into the `Funded` state."
+      ],
+      "discriminator": [
+        155,
+        18,
+        218,
+        141,
+        182,
+        213,
+        69,
+        201
+      ],
+      "accounts": [
+        {
+          "name": "escrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "consumer"
+              },
+              {
+                "kind": "account",
+                "path": "escrow.query_hash",
+                "account": "Escrow"
+              }
+            ]
+          }
+        },
+        {
+          "name": "consumer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "initialize_protocol",
+      "docs": [
+        "Initializes the global protocol config: authority, fee basis points and",
+        "treasury address. Only runs once (PDA init)."
+      ],
+      "discriminator": [
+        188,
+        233,
+        252,
+        106,
+        134,
+        146,
+        202,
+        91
+      ],
+      "accounts": [
+        {
+          "name": "protocol_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "treasury"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "fee_basis_points",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "refund_escrow",
+      "docs": [
+        "Consumer-initiated refund for an escrow that was never settled within",
+        "`protocol_config.refund_timeout_slots` of creation. Works for both",
+        "abandoned (Created) and funded-but-unsettled (Funded) escrows. Refunds",
+        "the escrowed amount to the consumer and closes the escrow (rent back to",
+        "the consumer). This is the consumer safety valve against an unavailable",
+        "gateway — it does not require the admin."
+      ],
+      "discriminator": [
+        107,
+        186,
+        89,
+        99,
+        26,
+        194,
+        23,
+        204
+      ],
+      "accounts": [
+        {
+          "name": "protocol_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "escrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "escrow.consumer",
+                "account": "Escrow"
+              },
+              {
+                "kind": "account",
+                "path": "escrow.query_hash",
+                "account": "Escrow"
+              }
+            ]
+          }
+        },
+        {
+          "name": "consumer",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "register_knowledge_node",
+      "docs": [
+        "Registers a knowledge node: SHA-256 content hash, author, price,",
+        "citation depth and metadata URI. The node PDA is unique per",
+        "(author, content_hash) pair."
+      ],
+      "discriminator": [
+        181,
+        117,
+        35,
+        186,
+        80,
+        12,
+        32,
+        120
+      ],
+      "accounts": [
+        {
+          "name": "knowledge_node",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  111,
+                  100,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "author"
+              },
+              {
+                "kind": "arg",
+                "path": "content_hash"
+              }
+            ]
+          }
+        },
+        {
+          "name": "author",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "payout_wallet"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "content_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "price_lamports",
+          "type": "u64"
+        },
+        {
+          "name": "citation_depth",
+          "type": "u8"
+        },
+        {
+          "name": "metadata_uri",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "settle_escrow",
+      "docs": [
+        "Settles a funded escrow against verified citation proofs. The escrowed",
+        "amount is split into the protocol fee (treasury) and the author payout.",
+        "Adjudicated by the protocol authority (admin) on behalf of the verifier."
+      ],
+      "discriminator": [
+        22,
+        135,
+        160,
+        194,
+        23,
+        186,
+        124,
+        110
+      ],
+      "accounts": [
+        {
+          "name": "protocol_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "escrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "escrow.consumer",
+                "account": "Escrow"
+              },
+              {
+                "kind": "account",
+                "path": "escrow.query_hash",
+                "account": "Escrow"
+              }
+            ]
+          }
+        },
+        {
+          "name": "consumer",
+          "writable": true
+        },
+        {
+          "name": "knowledge_node",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  111,
+                  100,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "knowledge_node.author",
+                "account": "KnowledgeNode"
+              },
+              {
+                "kind": "account",
+                "path": "knowledge_node.content_hash",
+                "account": "KnowledgeNode"
+              }
+            ]
+          }
+        },
+        {
+          "name": "author_payout_wallet",
+          "writable": true
+        },
+        {
+          "name": "treasury",
+          "writable": true
+        },
+        {
+          "name": "settlement_authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "citation_proofs",
+          "type": {
+            "vec": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "update_refund_timeout",
+      "docs": [
+        "Updates the consumer self-refund timeout (slots). Admin only. Lets an",
+        "operator set a short timeout for a demo or a long one for production."
+      ],
+      "discriminator": [
+        231,
+        6,
+        203,
+        107,
+        79,
+        54,
+        170,
+        241
+      ],
+      "accounts": [
+        {
+          "name": "protocol_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "protocol_config"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "refund_timeout_slots",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "update_settlement_authority",
+      "docs": [
+        "Rotates the dedicated settlement authority. Admin only. Lets the gateway",
+        "settle with a hot wallet that is *not* the protocol admin, so a gateway",
+        "compromise cannot be escalated to protocol-authority powers."
+      ],
+      "discriminator": [
+        27,
+        222,
+        189,
+        235,
+        194,
+        140,
+        62,
+        107
+      ],
+      "accounts": [
+        {
+          "name": "protocol_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "protocol_config"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "settlement_authority",
+          "type": "pubkey"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Escrow",
+      "discriminator": [
+        31,
+        213,
+        123,
+        187,
+        186,
+        22,
+        218,
+        155
+      ]
+    },
+    {
+      "name": "KnowledgeNode",
+      "discriminator": [
+        44,
+        70,
+        190,
+        215,
+        142,
+        77,
+        213,
+        184
+      ]
+    },
+    {
+      "name": "ProtocolConfig",
+      "discriminator": [
+        207,
+        91,
+        250,
+        28,
+        152,
+        179,
+        215,
+        209
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "EscrowCreated",
+      "discriminator": [
+        70,
+        127,
+        105,
+        102,
+        92,
+        97,
+        7,
+        173
+      ]
+    },
+    {
+      "name": "EscrowDisputed",
+      "discriminator": [
+        132,
+        73,
+        81,
+        200,
+        177,
+        51,
+        128,
+        18
+      ]
+    },
+    {
+      "name": "EscrowFunded",
+      "discriminator": [
+        228,
+        243,
+        166,
+        74,
+        22,
+        167,
+        157,
+        244
+      ]
+    },
+    {
+      "name": "EscrowRefunded",
+      "discriminator": [
+        132,
+        209,
+        49,
+        109,
+        135,
+        138,
+        28,
+        81
+      ]
+    },
+    {
+      "name": "EscrowSettled",
+      "discriminator": [
+        97,
+        27,
+        150,
+        55,
+        203,
+        179,
+        173,
+        23
+      ]
+    },
+    {
+      "name": "KnowledgeNodeRegistered",
+      "discriminator": [
+        169,
+        240,
+        179,
+        166,
+        193,
+        155,
+        221,
+        151
+      ]
+    },
+    {
+      "name": "ProtocolInitialized",
+      "discriminator": [
+        173,
+        122,
+        168,
+        254,
+        9,
+        118,
+        76,
+        132
+      ]
+    },
+    {
+      "name": "SettlementAuthorityUpdated",
+      "discriminator": [
+        175,
+        191,
+        134,
+        151,
+        29,
+        231,
+        200,
+        47
+      ]
+    },
+    {
+      "name": "StakeDeposited",
+      "discriminator": [
+        69,
+        152,
+        144,
+        109,
+        232,
+        34,
+        225,
+        19
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "FeeTooHigh",
+      "msg": "Protocol fee cannot exceed 1000 bps (10%)."
+    },
+    {
+      "code": 6001,
+      "name": "InvalidPrice",
+      "msg": "Price must be greater than zero."
+    },
+    {
+      "code": 6002,
+      "name": "InvalidCitationDepth",
+      "msg": "Citation depth must be between 1 and 10."
+    },
+    {
+      "code": 6003,
+      "name": "MetadataUriTooLong",
+      "msg": "Metadata URI must not exceed 200 bytes."
+    },
+    {
+      "code": 6004,
+      "name": "InvalidAmount",
+      "msg": "Amount must be greater than zero."
+    },
+    {
+      "code": 6005,
+      "name": "EscrowAlreadyFunded",
+      "msg": "Escrow has already been funded."
+    },
+    {
+      "code": 6006,
+      "name": "EscrowNotFunded",
+      "msg": "Escrow is not in the funded state."
+    },
+    {
+      "code": 6007,
+      "name": "InvalidCitationProofs",
+      "msg": "At least one citation proof is required (max 32)."
+    },
+    {
+      "code": 6008,
+      "name": "NodeInactive",
+      "msg": "Knowledge node is inactive."
+    },
+    {
+      "code": 6009,
+      "name": "InvalidPayoutWallet",
+      "msg": "Supplied payout wallet does not match the knowledge node."
+    },
+    {
+      "code": 6010,
+      "name": "InvalidTreasuryWallet",
+      "msg": "Supplied treasury does not match protocol config."
+    },
+    {
+      "code": 6011,
+      "name": "InvalidNode",
+      "msg": "Supplied knowledge node does not match the escrow."
+    },
+    {
+      "code": 6012,
+      "name": "Unauthorized",
+      "msg": "You are not authorized to perform this operation."
+    },
+    {
+      "code": 6013,
+      "name": "NothingToSlash",
+      "msg": "Knowledge node has no stake available to slash."
+    },
+    {
+      "code": 6014,
+      "name": "DisputeReasonTooLong",
+      "msg": "Dispute reason must not exceed 256 characters."
+    },
+    {
+      "code": 6015,
+      "name": "CalculationOverflow",
+      "msg": "Calculation overflow encountered."
+    },
+    {
+      "code": 6016,
+      "name": "InsufficientPayment",
+      "msg": "Escrow amount is below the knowledge node price."
+    },
+    {
+      "code": 6017,
+      "name": "EscrowNotRefundable",
+      "msg": "Escrow is not in a refundable state."
+    },
+    {
+      "code": 6018,
+      "name": "EscrowNotExpired",
+      "msg": "Escrow refund timeout has not elapsed yet."
+    }
+  ],
+  "types": [
+    {
+      "name": "Escrow",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "consumer",
+            "type": "pubkey"
+          },
+          {
+            "name": "node",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "query_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "EscrowStatus"
+              }
+            }
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "created_at_slot",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "EscrowCreated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "escrow",
+            "type": "pubkey"
+          },
+          {
+            "name": "consumer",
+            "type": "pubkey"
+          },
+          {
+            "name": "node",
+            "type": "pubkey"
+          },
+          {
+            "name": "query_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "EscrowDisputed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "escrow",
+            "type": "pubkey"
+          },
+          {
+            "name": "consumer",
+            "type": "pubkey"
+          },
+          {
+            "name": "node",
+            "type": "pubkey"
+          },
+          {
+            "name": "refund_amount",
+            "type": "u64"
+          },
+          {
+            "name": "slashed_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "reason",
+            "type": "string"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "EscrowFunded",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "escrow",
+            "type": "pubkey"
+          },
+          {
+            "name": "consumer",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "EscrowRefunded",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "escrow",
+            "type": "pubkey"
+          },
+          {
+            "name": "consumer",
+            "type": "pubkey"
+          },
+          {
+            "name": "refund_amount",
+            "type": "u64"
+          },
+          {
+            "name": "slot",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "EscrowSettled",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "escrow",
+            "type": "pubkey"
+          },
+          {
+            "name": "consumer",
+            "type": "pubkey"
+          },
+          {
+            "name": "node",
+            "type": "pubkey"
+          },
+          {
+            "name": "total_amount",
+            "type": "u64"
+          },
+          {
+            "name": "author_amount",
+            "type": "u64"
+          },
+          {
+            "name": "protocol_fee",
+            "type": "u64"
+          },
+          {
+            "name": "citation_proofs",
+            "type": {
+              "vec": {
+                "array": [
+                  "u8",
+                  32
+                ]
+              }
+            }
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "EscrowStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Created"
+          },
+          {
+            "name": "Funded"
+          },
+          {
+            "name": "Settled"
+          },
+          {
+            "name": "Disputed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "KnowledgeNode",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "author",
+            "type": "pubkey"
+          },
+          {
+            "name": "payout_wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "content_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "price_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "citation_depth",
+            "type": "u8"
+          },
+          {
+            "name": "metadata_uri",
+            "type": "string"
+          },
+          {
+            "name": "total_earned",
+            "type": "u64"
+          },
+          {
+            "name": "access_count",
+            "type": "u64"
+          },
+          {
+            "name": "stake_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "slashed_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "is_active",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "KnowledgeNodeRegistered",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "author",
+            "type": "pubkey"
+          },
+          {
+            "name": "payout_wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "content_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "price_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "citation_depth",
+            "type": "u8"
+          },
+          {
+            "name": "metadata_uri",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProtocolConfig",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury",
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_basis_points",
+            "type": "u16"
+          },
+          {
+            "name": "total_protocol_volume",
+            "type": "u64"
+          },
+          {
+            "name": "total_queries_processed",
+            "type": "u64"
+          },
+          {
+            "name": "refund_timeout_slots",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "settlement_authority",
+            "docs": [
+              "Dedicated hot wallet authorized to settle/refund escrows. Distinct from",
+              "`admin`, so the gateway's settlement key need not be the protocol",
+              "authority. Initialized to `admin` for backward compatibility; rotate it",
+              "with `update_settlement_authority`."
+            ],
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProtocolInitialized",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury",
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_basis_points",
+            "type": "u16"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SettlementAuthorityUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "previous",
+            "type": "pubkey"
+          },
+          {
+            "name": "settlement_authority",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "StakeDeposited",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "node",
+            "type": "pubkey"
+          },
+          {
+            "name": "author",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "total_stake",
+            "type": "u64"
+          }
+        ]
+      }
+    }
+  ]
+}
