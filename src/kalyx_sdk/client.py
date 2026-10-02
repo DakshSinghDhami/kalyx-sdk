@@ -655,10 +655,25 @@ class KalyxClient:
 
         # Retrieve is idempotent for the same escrow + signature, so it is
         # safe to retry on transient failures.
-        result = run_with_retries(
-            lambda: self._retrieve(challenge, signature, payment.escrow_address),
-            self._retry,
-        )
+        try:
+            result = run_with_retries(
+                lambda: self._retrieve(challenge, signature, payment.escrow_address),
+                self._retry,
+            )
+        except VerificationFailed as exc:
+            # Money already moved: surface the funding signature and the
+            # self-refund path so the payment is recoverable, never lost.
+            raise VerificationFailed(
+                f"payment confirmed on-chain (funding signature {signature}) but "
+                f"the gateway refused retrieval: {exc}. No second payment was "
+                f"attempted. If the gateway never settles, self-refund after the "
+                f"protocol refund timeout with "
+                f"refund_expired_escrow({payment.escrow_address!r}).",
+                reason=exc.reason,
+                request_id=exc.request_id,
+                funding_signature=signature,
+                escrow_address=payment.escrow_address,
+            ) from exc
         return result
 
     def refund_expired_escrow(self, escrow_address: str) -> RefundResult:

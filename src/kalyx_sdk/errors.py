@@ -117,6 +117,13 @@ class VerificationFailed(KalyxError):
     whose hash does not match the committed chunk id, and for challenges that
     fail client-side validation (wrong program id, tampered price, bad PDA).
     The ``reason`` is always safe to show to a user.
+
+    Attributes:
+        funding_signature: When the failure happened *after* a payment was
+            confirmed, the funding transaction signature (for support and for
+            the self-refund path). ``None`` for pre-payment refusals.
+        escrow_address: The funded escrow PDA awaiting settlement or refund,
+            when applicable.
     """
 
     def __init__(
@@ -125,8 +132,12 @@ class VerificationFailed(KalyxError):
         *,
         reason: str | None = None,
         request_id: str | None = None,
+        funding_signature: str | None = None,
+        escrow_address: str | None = None,
     ) -> None:
         self.reason = reason
+        self.funding_signature = funding_signature
+        self.escrow_address = escrow_address
         super().__init__(message, request_id=request_id)
 
 

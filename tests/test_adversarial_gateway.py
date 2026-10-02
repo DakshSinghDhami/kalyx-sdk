@@ -118,7 +118,21 @@ def test_prompt_injection_content_returned_as_inert_data():
         assert stack.send_count == 1
 
 
-# --- post-payment failures: no double payment -------------------------------------
+# --- post-payment failures: funds visible, refund guidance, no double pay --------
+
+
+def test_retrieve_403_after_funding_surfaces_signature_and_refund_guidance():
+    sc = Scenario(retrieve_mode="forbidden")
+    with EvilGateway(sc) as stack, make_client(stack) as client:
+        with pytest.raises(VerificationFailed) as ei:
+            client.query_and_retrieve("settlement")
+        err = ei.value
+        assert "funding-sig-1" in str(err)  # the real funding signature
+        assert err.funding_signature == "funding-sig-1"
+        assert err.escrow_address is not None
+        assert "refund_expired_escrow" in str(err)  # self-refund guidance
+        assert stack.send_count == 1  # never pays twice
+        assert stack.state.retrieve_attempts >= 1
 
 
 def test_retrieve_replay_after_funding_no_second_payment():
@@ -126,6 +140,17 @@ def test_retrieve_replay_after_funding_no_second_payment():
     with EvilGateway(sc) as stack, make_client(stack) as client:
         with pytest.raises(ReplayRejected):
             client.query_and_retrieve("settlement")
+        assert stack.send_count == 1
+
+
+def test_tampered_content_after_funding_flags_signature_and_guidance():
+    sc = Scenario(retrieve_mode="tampered_content")
+    with EvilGateway(sc) as stack, make_client(stack) as client:
+        with pytest.raises(VerificationFailed) as ei:
+            client.query_and_retrieve("settlement")
+        assert ei.value.reason == "content_hash_mismatch"
+        assert ei.value.funding_signature == "funding-sig-1"
+        assert "refund_expired_escrow" in str(ei.value)
         assert stack.send_count == 1
 
 
