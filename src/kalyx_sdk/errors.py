@@ -193,6 +193,10 @@ class ChainError(KalyxError):
 
     Attributes:
         signature: The transaction signature involved, when known.
+        retryable: True for transient failures (transport errors, timeouts,
+            HTTP 5xx/429) where a later retry may succeed. The SDK still never
+            retries a payment broadcast automatically; the flag exists so
+            callers can make their own policy decisions.
     """
 
     def __init__(
@@ -200,7 +204,9 @@ class ChainError(KalyxError):
         message: str,
         *,
         signature: str | None = None,
+        retryable: bool = False,
         request_id: str | None = None,
     ) -> None:
         self.signature = signature
+        self.retryable = retryable
         super().__init__(message, request_id=request_id)
