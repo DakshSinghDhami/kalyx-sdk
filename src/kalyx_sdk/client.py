@@ -227,8 +227,8 @@ from typing import Any  # noqa: E402
 import httpx  # noqa: E402
 
 from . import chain as _chain  # noqa: E402
+from .budget import BudgetTracker  # noqa: E402
 from .errors import (  # noqa: E402
-    BudgetExhausted,
     ChainError,
     ClusterMismatchError,
     DisabledError,
@@ -384,7 +384,7 @@ class KalyxClient:
         )
         self._rpc = _chain.RpcClient(self._http, self._cfg.rpc_url)
         self._config_cache: tuple[float, ProtocolConfig] | None = None
-        self._spent_lamports = 0
+        self._budget = BudgetTracker(budget_lamports=self._cfg.session_budget_lamports)
         self._cluster_checked = False
 
     # -- lifecycle ------------------------------------------------------
@@ -408,7 +408,12 @@ class KalyxClient:
     @property
     def spent_lamports(self) -> int:
         """Lamports this client has paid so far (session spend)."""
-        return self._spent_lamports
+        return self._budget.spent
+
+    @property
+    def remaining_budget_lamports(self) -> int | None:
+        """Session lamports still spendable, or None when uncapped."""
+        return self._budget.remaining_lamports
 
     def __repr__(self) -> str:
         return f"KalyxClient(gateway_url={self._cfg.gateway_url!r}, address={self.address!r})"
@@ -517,13 +522,7 @@ class KalyxClient:
         cap = max_price_lamports
         if cap is None:
             cap = self._cfg.max_price_lamports
-        if cap is not None and challenge.price_lamports > cap:
-            raise PriceExceedsBudget(
-                f"price {challenge.price_lamports} lamports exceeds the per-call "
-                f"cap of {cap} lamports",
-                challenge=challenge.raw,
-            )
-        self._check_budget(challenge.price_lamports)
+        self._check_affordable(challenge, cap)
 
         if self._cfg.wallet is None:
             raise PaymentRequired(
@@ -561,20 +560,19 @@ class KalyxClient:
         _chain.wait_for_confirmation(self._rpc, signature, timeout=self._confirm_timeout)
 
         result = self._retrieve(challenge, signature, payment.escrow_address)
-        self._spent_lamports += challenge.price_lamports
+        self._budget.record(challenge.price_lamports)
         return result
 
     # -- internals --------------------------------------------------------
 
-    def _check_budget(self, price: int) -> None:
-        budget = self._cfg.session_budget_lamports
-        if budget is not None and self._spent_lamports + price > budget:
-            raise BudgetExhausted(
-                f"paying {price} lamports would exceed the session budget "
-                f"({self._spent_lamports} + {price} > {budget})",
-                spent_lamports=self._spent_lamports,
-                budget_lamports=budget,
-            )
+    def _check_affordable(self, challenge: Challenge, cap: int | None) -> None:
+        """Per-call cap first, then the session budget — before any payment."""
+        try:
+            self._budget.check_price(challenge.price_lamports, cap)
+        except PriceExceedsBudget as exc:
+            exc.challenge = challenge.raw
+            raise
+        self._budget.check_spend(challenge.price_lamports)
 
     def _assert_cluster(self, cfg: ProtocolConfig) -> None:
         if self._cluster_checked:
