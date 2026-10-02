@@ -12,7 +12,10 @@ from dataclasses import dataclass
 from urllib.parse import urlparse
 
 from . import __version__
-from .errors import ConfigError
+from .chain import KnowledgeNodeState
+from .errors import ConfigError, VerificationFailed
+from .escrow import DEFAULT_PROGRAM_ID, derive_node_pda
+from .models import Challenge
 from .wallet import KeypairSource, Wallet, load_wallet
 
 #: Default public gateway (Solana devnet deployment).
@@ -132,4 +135,84 @@ class ClientConfig:
             session_budget_lamports=session_budget_lamports,
             timeout=float(timeout),
             user_agent=user_agent or default_user_agent(),
+        )
+
+
+# --- challenge verification (verify before paying) ----------------------------
+
+_HEX64 = frozenset("0123456789abcdefABCDEF")
+
+
+def verify_challenge_offchain(
+    challenge: Challenge, *, expected_program_id: str | None = None
+) -> None:
+    """Validate a 402 challenge without touching the network.
+
+    Checks, in order (any failure raises :class:`VerificationFailed` *before*
+    any money moves):
+
+    * ``program_id`` matches the gateway-reported id (or the vendored IDL's
+      address when the config could not be fetched);
+    * the challenge names an on-chain ``node_address`` (a node that is not
+      registered on-chain cannot be paid);
+    * ``content_hash`` is 32 bytes of hex;
+    * the node PDA re-derives from ``(author, content_hash)`` — the author is
+      ``author_wallet`` when the gateway reports it, else
+      ``publisher_wallet`` (see BLOCKERS: the challenge does not carry the
+      author explicitly).
+    """
+    expected = expected_program_id or DEFAULT_PROGRAM_ID
+    if challenge.program_id != expected:
+        raise VerificationFailed(
+            "challenge program_id does not match the configured program",
+            reason="program_id_mismatch",
+        )
+    if not challenge.node_address:
+        raise VerificationFailed(
+            "challenge names no on-chain node (node_address empty); "
+            "the node is not registered, so it cannot be paid",
+            reason="node_not_registered",
+        )
+    ch = challenge.content_hash
+    if len(ch) != 64 or any(c not in _HEX64 for c in ch):
+        raise VerificationFailed(
+            "challenge content_hash is not 32 bytes of hex", reason="bad_content_hash"
+        )
+    author = challenge.author_wallet or challenge.publisher_wallet
+    try:
+        derived, _bump = derive_node_pda(author, bytes.fromhex(ch), expected)
+    except Exception as exc:  # solders ValueError for bad base58 / off-curve
+        raise VerificationFailed(
+            "challenge wallets/hash cannot form a node PDA", reason="bad_pda_inputs"
+        ) from exc
+    if str(derived) != challenge.node_address:
+        raise VerificationFailed(
+            "challenge node_address does not match the re-derived node PDA",
+            reason="pda_mismatch",
+        )
+
+
+def verify_node_preflight(challenge: Challenge, node: KnowledgeNodeState | None) -> None:
+    """Validate the on-chain node account against the challenge.
+
+    Raises :class:`VerificationFailed` when the node is missing, inactive,
+    priced above the challenge, or bound to different content. Pure function:
+    the account read itself lives in :mod:`kalyx_sdk.chain`.
+    """
+    if node is None:
+        raise VerificationFailed(
+            "knowledge node account does not exist on-chain", reason="node_not_registered"
+        )
+    if not node.is_active:
+        raise VerificationFailed("knowledge node is inactive on-chain", reason="node_inactive")
+    if node.content_hash.hex() != challenge.content_hash.lower():
+        raise VerificationFailed(
+            "on-chain node content hash differs from the challenge",
+            reason="content_hash_mismatch",
+        )
+    if node.price_lamports > challenge.price_lamports:
+        raise VerificationFailed(
+            "on-chain node price exceeds the challenge price; funding at the "
+            "challenge price would fail on-chain",
+            reason="onchain_price_higher",
         )

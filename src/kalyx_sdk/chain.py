@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import time
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -101,6 +102,94 @@ def decode_escrow(raw: bytes, *, address: str = "") -> EscrowState:
         created_at_slot=created_at_slot,
         bump=bump,
     )
+
+
+#: KnowledgeNode account discriminator: sha256("account:KnowledgeNode")[:8].
+KNOWLEDGE_NODE_DISCRIMINATOR = bytes([44, 70, 190, 215, 142, 77, 213, 184])
+
+
+@dataclass(frozen=True)
+class KnowledgeNodeState:
+    """Decoded on-chain knowledge node (fields the consumer flow needs)."""
+
+    author: str
+    payout_wallet: str
+    content_hash: bytes
+    price_lamports: int
+    is_active: bool
+    stake_lamports: int
+
+
+def decode_knowledge_node(raw: bytes) -> KnowledgeNodeState:
+    """Decode a raw KALYX ``KnowledgeNode`` account.
+
+    Layout: disc(8) author(32) payout(32) content_hash(32) price(u64)
+    citation_depth(u8) metadata_uri(string: u32 LE len + bytes)
+    total_earned(u64) access_count(u64) stake(u64) slashed(u64) active(bool)
+    bump(u8). Pinned in ``tests/test_escrow_layout.py``.
+
+    Raises:
+        ValueError: when the discriminator is wrong or the buffer is short.
+    """
+    if len(raw) < 8 + 32 + 32 + 32 + 8 + 1 + 4:
+        raise ValueError("knowledge node account too short")
+    if raw[:8] != KNOWLEDGE_NODE_DISCRIMINATOR:
+        raise ValueError("account discriminator is not KnowledgeNode")
+    author = raw[8:40]
+    payout = raw[40:72]
+    content_hash = raw[72:104]
+    price = int.from_bytes(raw[104:112], "little")
+    off = 112 + 1  # skip citation_depth
+    uri_len = int.from_bytes(raw[off : off + 4], "little")
+    off += 4 + uri_len
+    if len(raw) < off + 8 + 8 + 8 + 8 + 1:
+        raise ValueError("knowledge node account truncated after metadata_uri")
+    off += 8 + 8  # total_earned, access_count
+    stake = int.from_bytes(raw[off : off + 8], "little")
+    off += 8 + 8  # stake, slashed
+    is_active = bool(raw[off])
+    return KnowledgeNodeState(
+        author=_b58(author),
+        payout_wallet=_b58(payout),
+        content_hash=content_hash,
+        price_lamports=price,
+        is_active=is_active,
+        stake_lamports=stake,
+    )
+
+
+def node_state(rpc: RpcClient, address: str, *, program_id: str) -> KnowledgeNodeState | None:
+    """Fetch and decode a knowledge node account; None when absent."""
+    value = get_account_info(rpc, address)
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ChainError("RPC getAccountInfo returned malformed account value")
+    if value.get("owner") != program_id:
+        raise GatewayUnavailable("node account is not owned by the KALYX program")
+    try:
+        raw = base64.b64decode(value["data"][0])
+        return decode_knowledge_node(raw)
+    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        raise GatewayUnavailable(f"node account failed to decode: {exc}") from exc
+
+
+async def anode_state(
+    rpc: AsyncRpcClient, address: str, *, program_id: str
+) -> KnowledgeNodeState | None:
+    """Async variant of :func:`node_state`."""
+    value = await aget_account_info(rpc, address)
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ChainError("RPC getAccountInfo returned malformed account value")
+    if value.get("owner") != program_id:
+        raise GatewayUnavailable("node account is not owned by the KALYX program")
+    try:
+        raw = base64.b64decode(value["data"][0])
+        return decode_knowledge_node(raw)
+    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        raise GatewayUnavailable(f"node account failed to decode: {exc}") from exc
 
 
 def _b58(raw: bytes) -> str:
