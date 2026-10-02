@@ -147,3 +147,19 @@ def test_current_slot_helper():
 
     assert current_slot(_Rpc()) == 123
     _ = httpx  # silence unused import when refactored
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_async_refund_happy_path():
+    from kalyx_sdk.aclient import AsyncKalyxClient
+
+    respx.get(f"{GATEWAY}/v1/config").respond(200, json=config_body())
+    rpc = rpc_with_escrow(created_at_slot=OLD_SLOT)
+    respx.post(RPC_URL).mock(side_effect=rpc.handler)
+    async with AsyncKalyxClient(
+        gateway_url=GATEWAY, rpc_url=RPC_URL, keypair=PAYER, retry_policy=FAST
+    ) as c:
+        result = await c.refund_expired_escrow(ESCROW_ADDR)
+    assert result.refunded_lamports == PRICE
+    assert "sendTransaction" in rpc.methods()

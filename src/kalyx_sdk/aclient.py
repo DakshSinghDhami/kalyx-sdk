@@ -36,13 +36,14 @@ from .errors import (
     PriceExceedsBudget,
     VerificationFailed,
 )
-from .escrow import build_create_and_fund_tx, query_hash
+from .escrow import build_create_and_fund_tx, build_refund_tx, query_hash
 from .models import (
     Challenge,
     NodeDetail,
     NodePage,
     ProbeResult,
     ProtocolConfig,
+    RefundResult,
     RetrievalResult,
 )
 from .retry import RetryPolicy, arun_with_retries
@@ -302,6 +303,56 @@ class AsyncKalyxClient:
         )
         self._budget.record(challenge.price_lamports)
         return result
+
+    async def refund_expired_escrow(self, escrow_address: str) -> RefundResult:
+        """Async variant of :meth:`KalyxClient.refund_expired_escrow`."""
+        if not escrow_address or not escrow_address.strip():
+            raise ValueError("escrow_address must be non-empty")
+        if self._cfg.wallet is None:
+            raise PaymentRequired("a keypair is required to claim a refund")
+        cfg = await self.config()
+        await self._assert_cluster(cfg)
+        state = await _chain.aescrow_state(self._rpc, escrow_address, program_id=cfg.program_id)
+        if state is None:
+            raise VerificationFailed(
+                "escrow account does not exist on-chain", reason="escrow_not_found"
+            )
+        if state.consumer != self._cfg.wallet.address:
+            raise VerificationFailed(
+                "escrow belongs to a different consumer", reason="not_consumer"
+            )
+        if state.status not in ("Created", "Funded"):
+            raise VerificationFailed(
+                f"escrow is {state.status}; only Created/Funded escrows are refundable",
+                reason="escrow_not_refundable",
+            )
+        slot = await _chain.acurrent_slot(self._rpc)
+        timeout_slots = cfg.refund_timeout_slots or 0
+        age = slot - state.created_at_slot
+        if timeout_slots and age < timeout_slots:
+            raise VerificationFailed(
+                f"escrow not yet refundable: {age} of {timeout_slots} slots elapsed",
+                reason="escrow_not_expired",
+            )
+        blockhash = await _chain.alatest_blockhash(self._rpc)
+        payment = build_refund_tx(
+            wallet=self._cfg.wallet,
+            qhash=state.query_hash,
+            recent_blockhash=blockhash,
+            program_id=cfg.program_id,
+        )
+        if payment.escrow_address != escrow_address:
+            raise VerificationFailed(
+                "refund transaction targets a different escrow PDA",
+                reason="escrow_pda_mismatch",
+            )
+        signature = await _chain.asend_transaction(self._rpc, payment.transaction_b64)
+        await _chain.await_for_confirmation(self._rpc, signature, timeout=self._confirm_timeout)
+        return RefundResult(
+            escrow_address=escrow_address,
+            refunded_lamports=state.amount_lamports,
+            signature=signature,
+        )
 
     # -- internals --------------------------------------------------------
 
