@@ -66,6 +66,8 @@ def test_bad_timeout_rejected():
 
 
 def test_user_agent_format():
+    from kalyx_sdk._version import __version__
+
     ua = default_user_agent()
-    assert ua.startswith("kalyx-sdk/0.1.0")
+    assert ua.startswith(f"kalyx-sdk/{__version__}")
     assert "kalyxprotocol.xyz" in ua
