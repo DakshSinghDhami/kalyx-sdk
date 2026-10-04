@@ -10,6 +10,11 @@ the small ``langchain_core`` surface, and raises a helpful error when the
 extra is missing.
 """
 
+# Annotations must stay lazy: ``Document``/``CallbackManagerForRetrieverRun``
+# are bound only inside the ``try:`` below, so eager evaluation would raise
+# NameError at import time when the extra is not installed.
+from __future__ import annotations
+
 from typing import Any
 
 from .client import KalyxClient
