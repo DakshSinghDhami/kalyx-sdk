@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.2] - 2026-10-04
+
+### Fixed
+
+- **`kalyx_sdk.langchain` imports cleanly without the `langchain` extra**:
+  runtime-evaluated annotations referenced names bound only inside the
+  `try:` import block, so the import died with
+  `NameError: name 'Document' is not defined` when `langchain-core` was
+  absent. Annotations are now deferred; constructing the retriever/tool
+  without the extra still raises the documented helpful `ImportError`.
+  Regression tests simulate the missing extra in a subprocess (LlamaIndex
+  module covered too — it was already clean).
+
+### Docs
+
+- **Install instructions no longer claim PyPI availability** — the index
+  404s; README and the usage guide now pin the tagged git release
+  (`git+https://github.com/DakshSinghDhami/kalyx-sdk.git@v0.1.2`).
+- **Error taxonomy table names the real `BudgetExhausted` attributes**
+  (`spent_lamports` / `budget_lamports`, previously "spend/budget").
+- New `tests/test_docs_consistency.py` pins both doc facts so they cannot
+  drift from the code again.
+
 ## [0.1.1] - 2026-10-02
 
 Post-release QA hardening. No API breaks; all changes are bug fixes found

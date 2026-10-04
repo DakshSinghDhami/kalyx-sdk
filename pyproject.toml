@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kalyx-sdk"
-version = "0.1.1"
+version = "0.1.2"
 description = "Python SDK for the KALYX protocol: pay-per-citation context retrieval for autonomous AI agents over HTTP 402 on Solana devnet"
 readme = "README.md"
 license = "MIT"
