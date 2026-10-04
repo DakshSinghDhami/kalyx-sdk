@@ -25,12 +25,17 @@ verification step passes. Free answers stay free.
 
 ## Install
 
+`kalyx-sdk` is **not on PyPI yet** — install the tagged release straight from
+GitHub (PEP 508 direct references):
+
 ```bash
-pip install kalyx-sdk                     # core (httpx + solders)
-pip install "kalyx-sdk[langchain]"        # + LangChain retriever/tool
-pip install "kalyx-sdk[llamaindex]"       # + LlamaIndex retriever/tool
-pip install "kalyx-sdk[dev]"              # tests, lint, typecheck
+pip install "git+https://github.com/DakshSinghDhami/kalyx-sdk.git@v0.1.2"                        # core (httpx + solders)
+pip install "kalyx-sdk[langchain] @ git+https://github.com/DakshSinghDhami/kalyx-sdk.git@v0.1.2"  # + LangChain retriever/tool
+pip install "kalyx-sdk[llamaindex] @ git+https://github.com/DakshSinghDhami/kalyx-sdk.git@v0.1.2" # + LlamaIndex retriever/tool
 ```
+
+For development, clone and install the editable extra set instead:
+`pip install -e ".[dev]"` (tests, lint, typecheck).
 
 Requires Python ≥ 3.10.
 
@@ -91,7 +96,7 @@ All SDK failures derive from `kalyx_sdk.errors.KalyxError`:
 | --- | --- |
 | `PaymentRequired` | a payment is needed but impossible/refused (carries the raw challenge) |
 | `PriceExceedsBudget` | challenge price above the per-call cap |
-| `BudgetExhausted` | session budget would be exceeded (carries spend/budget) |
+| `BudgetExhausted` | session budget would be exceeded (carries `spent_lamports`/`budget_lamports`) |
 | `InsufficientFunds` | payer cannot cover price + rent + fee (carries amounts) |
 | `VerificationFailed` | challenge/content/cluster verification failed (machine `reason`) |
 | `ClusterMismatchError` | mainnet, unknown, or gateway/client cluster mismatch |
