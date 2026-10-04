@@ -6,7 +6,8 @@ public devnet deployment; nothing touches mainnet.
 ## 0. Setup
 
 ```bash
-pip install kalyx-sdk
+# Not on PyPI yet — install the tagged release from GitHub:
+pip install "git+https://github.com/DakshSinghDhami/kalyx-sdk.git@v0.1.2"
 export KALYX_KEYPAIR_PATH=~/.config/solana/id.json   # devnet-funded keypair
 ```
 
